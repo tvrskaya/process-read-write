@@ -4,6 +4,22 @@
 
 #include <vector>
 
+char* FindPattern(char* src, size_t srcLen, const char* pattern, size_t patternLen)
+{
+	char* cur = src;
+	size_t curPos = 0;
+	while (curPos < srcLen)
+	{
+		if (memcmp(cur, pattern, patternLen) == 0)
+		{
+			return cur;
+		}
+		curPos++;
+		cur = &src[curPos];
+	}
+	return nullptr;
+}
+
 int main(void)
 {
 	HANDLE h;
@@ -39,27 +55,36 @@ int main(void)
 	{
 		MEMORY_BASIC_INFORMATION memInfo;
 		char* basePtr = (char*)0x0;
+		const char* pattern = "victim";
+		const char* newData = "NowBadguy";
 		while (VirtualQueryEx(victimHandle, (void*)basePtr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
 		{
-			char* localCopyContent = (char*)malloc(memInfo.RegionSize);
-
-			SIZE_T bytesRead = 0;
-			int data = 100;
-			if (ReadProcessMemory(victimHandle,	memInfo.BaseAddress, localCopyContent, memInfo.RegionSize, &bytesRead))
+			if (memInfo.State == MEM_COMMIT && memInfo.Protect == PAGE_READWRITE)
 			{
-				for (SIZE_T i = 0; i < bytesRead; i++)
+				char* localCopyContent = (char*)malloc(memInfo.RegionSize);
+				char* remoteMemRegionPtr = (char*)memInfo.BaseAddress;
+				SIZE_T bytesRead = 0;
+				if (ReadProcessMemory(victimHandle, memInfo.BaseAddress, localCopyContent, memInfo.RegionSize, &bytesRead))
 				{
-					if ((int)localCopyContent[i] == data)
+					char* match = FindPattern(localCopyContent, memInfo.RegionSize, pattern, sizeof(pattern));
+					if (match)
 					{
-						std::cout << (void*)&localCopyContent[i] << std::endl;
-						WriteProcessMemory(victimHandle, &localCopyContent, &data, sizeof(data), nullptr);
+						uint64_t diff = (uint64_t)match - (uint64_t)localCopyContent;
+						char* processPtr = remoteMemRegionPtr + diff;
+						std::cout << "Match: " << (char*)match << std::endl;
+						std::cout << "Ptr: " << processPtr << std::endl;
+						SIZE_T bytesWrite = 0;
+						if (WriteProcessMemory(victimHandle, processPtr, newData, sizeof(newData), &bytesWrite))
+						{
+							std::cout << "Write complete. Bytes write: " << bytesWrite << std::endl;
+						}
 					}
+					free(localCopyContent);
 				}
-				free(localCopyContent);
-			}
-			else
-			{
-				std::cout << "Cant read process memory!" << std::endl;
+				else
+				{
+					std::cout << "Cant read process memory!" << std::endl;
+				}
 			}
 			basePtr = (char*)memInfo.BaseAddress + memInfo.RegionSize;
 		}
